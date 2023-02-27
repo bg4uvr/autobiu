@@ -18,7 +18,7 @@
 #include <ctype.h>
 #include "unp.h"
 
-char server[50], port[10], mycall[10], msg[256];
+char server_kiss[50], port_kiss[10], server_aprs[50], port_aprs[10], mycall[10], msg[256];
 
 #define MAXLEN 512
 
@@ -262,115 +262,145 @@ int encode(uint8_t *outbuf, uint8_t *inbuf)
     return kissencode(outbuf, buf, strlen(buf));
 }
 
-void Process(char *server, char *port)
+void Process()
 {
     FILE *fp = NULL;
     uint8_t buffer[MAXLEN], dspbuf[MAXLEN], tmpbuf[100];
     u_int32_t starttime = 0, lasttime = 0;
-    uint8_t workflag = 0, reptcnt = 0;
+    uint8_t workflag = 0, reptcnt = 0, login = 0;
     fd_set rset;
     struct timeval tv;
-    int r_fd, m, n, optval;
+    int s_fd, i_fd = -1, max_fd, m, n, optval;
     socklen_t optlen = sizeof(optval);
-    r_fd = Tcp_connect(server, port);
-    setsockopt(r_fd, IPPROTO_TCP, TCP_NODELAY, &optval, optval);
+    s_fd = Tcp_connect(server_kiss, port_kiss);
+    i_fd = Tcp_connect(server_aprs, port_aprs);
+    setsockopt(s_fd, IPPROTO_TCP, TCP_NODELAY, &optval, optval);
+    setsockopt(i_fd, IPPROTO_TCP, TCP_NODELAY, &optval, optval);
     optval = 1;
-    setsockopt(r_fd, SOL_SOCKET, SO_KEEPALIVE, &optval, optlen);
+    setsockopt(s_fd, SOL_SOCKET, SO_KEEPALIVE, &optval, optlen);
+    setsockopt(i_fd, SOL_SOCKET, SO_KEEPALIVE, &optval, optlen);
     optval = 3;
-    setsockopt(r_fd, IPPROTO_TCP, TCP_KEEPCNT, &optval, optlen);
+    setsockopt(s_fd, IPPROTO_TCP, TCP_KEEPCNT, &optval, optlen);
+    setsockopt(i_fd, IPPROTO_TCP, TCP_KEEPCNT, &optval, optlen);
     optval = 60;
-    setsockopt(r_fd, IPPROTO_TCP, TCP_KEEPIDLE, &optval, optlen);
+    setsockopt(s_fd, IPPROTO_TCP, TCP_KEEPIDLE, &optval, optlen);
+    setsockopt(i_fd, IPPROTO_TCP, TCP_KEEPIDLE, &optval, optlen);
     optval = 5;
-    setsockopt(r_fd, IPPROTO_TCP, TCP_KEEPINTVL, &optval, optlen);
-    printf("server connected.\n");
+    setsockopt(s_fd, IPPROTO_TCP, TCP_KEEPINTVL, &optval, optlen);
+    setsockopt(i_fd, IPPROTO_TCP, TCP_KEEPINTVL, &optval, optlen);
+    printf("monitoring radio kiss data..\n");
+
     while (1)
     {
         FD_ZERO(&rset);
-        FD_SET(r_fd, &rset);
+        FD_SET(s_fd, &rset);
+        FD_SET(i_fd, &rset);
         tv.tv_sec = 1;
         tv.tv_usec = 0;
-        m = Select(r_fd + 1, &rset, NULL, NULL, &tv);
+        max_fd = max(s_fd, i_fd);
+        m = Select(max_fd + 1, &rset, NULL, NULL, &tv);
         if (m > 0)
         {
-            n = recv(r_fd, buffer, MAXLEN, 0);
-            if (n == 0)
+            if (FD_ISSET(s_fd, &rset))
             {
-                fprintf(stderr, "remote disconnect");
-                exit(0);
-            }
-            if ((n < 0) && !(errno == EINTR || errno == EWOULDBLOCK || errno == EAGAIN))
-            {
-                fprintf(stderr, "read from remote error: %d", errno);
-                exit(0);
-            }
-            if (n > 0)
-            {
-                if (buffer[0] == 0xc0 && buffer[1] == 0x00 && buffer[n - 1] == 0xc0)
+                n = recv(s_fd, buffer, MAXLEN, 0);
+                if (n == 0)
                 {
-                    fp = fopen(filename(), "a");
-                    sprintf(tmpbuf, "[%s] kiss frame received:\n", timestr());
-                    printf("%s", tmpbuf);
-                    fprintf(fp, "%s", tmpbuf);
-                    for (uint16_t i = 0; i < n; i++)
+                    fprintf(stderr, "remote disconnect");
+                    exit(0);
+                }
+                if ((n < 0) && !(errno == EINTR || errno == EWOULDBLOCK || errno == EAGAIN))
+                {
+                    fprintf(stderr, "read from remote error: %d", errno);
+                    exit(0);
+                }
+                if (n > 0)
+                {
+                    if (buffer[0] == 0xc0 && buffer[1] == 0x00 && buffer[n - 1] == 0xc0)
                     {
-                        printf("%02X ", buffer[i]);
-                        fprintf(fp, "%02X ", buffer[i]);
-                    }
-                    printf("\n");
-                    fprintf(fp, "\n");
-                    decode(dspbuf, buffer, n);
-                    printf("%s\n", dspbuf);
-                    fprintf(fp, "%s\n", dspbuf);
-                    if (strstr(dspbuf, "RS0ISS*") != NULL || strstr(dspbuf, "RS0ISS>") != NULL)
-                    {
-                        if (workflag == 0 && time(NULL) - lasttime > 900)
+                        fp = fopen(filename(), "a");
+                        sprintf(tmpbuf, "[%s] kiss frame received:\n", timestr());
+                        printf("%s", tmpbuf);
+                        fprintf(fp, "%s", tmpbuf);
+                        for (uint16_t i = 0; i < n; i++)
                         {
-                            reptcnt = 0;
-                            starttime = time(NULL);
-                            workflag = 1;
-                            sprintf(tmpbuf, "work start...\n");
-                            printf("%s", tmpbuf);
-                            fprintf(fp, "%s", tmpbuf);
+                            printf("%02X ", buffer[i]);
+                            fprintf(fp, "%02X ", buffer[i]);
                         }
+                        printf("\n");
+                        fprintf(fp, "\n");
+                        decode(dspbuf, buffer, n);
+                        printf("%s\n", dspbuf);
+                        fprintf(fp, "%s\n", dspbuf);
+                        if (strstr(dspbuf, "RS0ISS*") != NULL || strstr(dspbuf, "RS0ISS>") != NULL)
+                        {
+                            if (workflag == 0 && time(NULL) - lasttime > 900)
+                            {
+                                reptcnt = 0;
+                                starttime = time(NULL);
+                                workflag = 1;
+                                sprintf(tmpbuf, "ISS signal has been received. task start..\n");
+                                printf("%s", tmpbuf);
+                                fprintf(fp, "%s", tmpbuf);
+                            }
+                        }
+                        fclose(fp);
+                    }
+                }
+            }
+            if (FD_ISSET(i_fd, &rset))
+            {
+                n = recv(i_fd, buffer, MAXLEN, 0);
+                if (n == 0)
+                {
+                    fprintf(stderr, "remote disconnect");
+                    exit(0);
+                }
+                if ((n < 0) && !(errno == EINTR || errno == EWOULDBLOCK || errno == EAGAIN))
+                {
+                    fprintf(stderr, "read from remote error: %d", errno);
+                    exit(0);
+                }
+                if (n > 0)
+                {
+                    if (login == 0 && (strstr(buffer, "aprsc") || strstr(buffer, "javAPRSSrvr")))
+                    {
+                        sprintf(dspbuf, "user %s pass -1 vers autodiu 1.0 filter b/%s\r\n", mycall, mycall);
+                        Write(i_fd, dspbuf, strlen(dspbuf));
+                        login = 1;
                     }
                     char callcheck[15];
                     sprintf(callcheck, "%s>", mycall);
-                    if (workflag == 1 && strstr(dspbuf, callcheck) && strstr(dspbuf, "RS0ISS*"))
+                    if (workflag == 1 && strstr(buffer, callcheck) && strstr(buffer, "RS0ISS*"))
                     {
-                        reptcnt++;
-                        sprintf(tmpbuf, "my beacon recevied %d times.\n", reptcnt);
+                        fp = fopen(filename(), "a");
+                        sprintf(tmpbuf, "[%s] gating confirmed, task of this time is complete.\n", timestr());
                         printf("%s", tmpbuf);
                         fprintf(fp, "%s", tmpbuf);
-                        if (reptcnt >= 3)
-                        {
-                            sprintf(tmpbuf, "work stopped.\n");
-                            printf("%s", tmpbuf);
-                            fprintf(fp, "%s", tmpbuf);
-                            workflag = 0;
-                        }
+                        workflag = 0;
+                        fclose(fp);
                     }
-                    fclose(fp);
                 }
             }
         }
-        if (workflag == 1)
+        if (workflag > 0)
         {
             if ((time(NULL) - lasttime) > 30)
             {
                 fp = fopen(filename(), "a");
                 sprintf(dspbuf, "%s>BEACON,RS0ISS:%s", mycall, msg);
                 n = encode(buffer, dspbuf);
-                Write(r_fd, buffer, n);
+                Write(s_fd, buffer, n);
                 lasttime = time(NULL);
-                sprintf(tmpbuf, "[%s] beacon sent.\n", timestr());
+                sprintf(tmpbuf, "[%s] my beacon has been sent once.\n", timestr());
                 printf("%s", tmpbuf);
                 fprintf(fp, "%s", tmpbuf);
                 fclose(fp);
             }
-            if ((time(NULL) - starttime) > 300)
+            if ((time(NULL) - starttime) > 480)
             {
                 fp = fopen(filename(), "a");
-                sprintf(tmpbuf, "[%s] time over, work stopped.\n", timestr());
+                sprintf(tmpbuf, "[%s] time out, task of this time is stopped.\n", timestr());
                 printf("%s", tmpbuf);
                 fprintf(fp, "%s", tmpbuf);
                 fclose(fp);
@@ -378,34 +408,36 @@ void Process(char *server, char *port)
             }
         }
     }
-    close(r_fd);
+    close(s_fd);
+    close(i_fd);
 }
 
-int main(int argc, char *argv[])
+char *strupr(char *str)
 {
-    printf("\n\t\t--------------\n\t\t|  AUTO BIU  |\n\t\t--------------\n");
-    printf("\t\t\t by bg4uvr@qq.com\n");
-    printf("\nyou can use './autobiu -d' to run as debug mode.\n\n");
-    int debug = 0;
-    if (argc == 2 && strcmp(argv[1], "-d") == 0)
-        debug = 1;
-    else if (argc != 1)
+    char *ptr = str;
+    while (*ptr != '\0')
     {
-        printf("\ncommand option fail, only can use '-d'\n\n");
-        printf("\nnow the program exited.\n\n");
-        return 0;
+        if (islower(*ptr))
+            *ptr = toupper(*ptr);
+        ptr++;
     }
+    return str;
+}
+
+int checkcfg(void)
+{
     FILE *fp;
     fp = fopen("autobiu.conf", "r");
     if (fp == NULL)
     {
         fp = fopen("autobiu.conf", "w");
-        fprintf(fp, "# autobiu.conf\n\nserver:\t127.0.0.1\nport:\t8001\nmycall:\tBG4UVR-6\n");
-        fprintf(fp, "msg:\t!3153.34N/12106.91E`Nantong CHINA\n");
-        printf("config file \"autobiu.conf\" not found, now created,\npelase edit it and run program again!\n\n");
+        fprintf(fp, "# autobiu.conf\n\nserver_kiss:\t127.0.0.1\nport_kiss:\t8001\n");
+        fprintf(fp, "server_aprs:\tasia.aprs2.net\nport_aprs:\t14580\nmycall:\t\tBG4UVR-6\n");
+        fprintf(fp, "msg:\t\t!3153.34N/12106.91E`Nantong CHINA\n");
+        printf("config file \"autobiu.conf\" not found, now created,\nplease edit it and run program again!\n\n");
         printf("now the program exited.\n\n");
         fclose(fp);
-        return 0;
+        return -1;
     }
     else
     {
@@ -416,14 +448,18 @@ int main(int argc, char *argv[])
         {
             if (buf[0] == '#')
                 continue;
-            if (strstr(buf, "server:"))
+            if (strstr(buf, "server_kiss:"))
                 confno = 1;
-            else if (strstr(buf, "port:"))
+            else if (strstr(buf, "port_kiss:"))
                 confno = 2;
-            else if (strstr(buf, "mycall:"))
+            else if (strstr(buf, "server_aprs:"))
                 confno = 3;
-            else if (strstr(buf, "msg:"))
+            else if (strstr(buf, "port_aprs:"))
                 confno = 4;
+            else if (strstr(buf, "mycall:"))
+                confno = 5;
+            else if (strstr(buf, "msg:"))
+                confno = 6;
             else
                 continue;
             head = strchr(buf, ':');
@@ -431,7 +467,7 @@ int main(int argc, char *argv[])
                 head++;
             while (isspace(*head));
             tail = head;
-            if (confno != 4)
+            if (confno != 6)
             {
                 do
                     tail++;
@@ -447,30 +483,67 @@ int main(int argc, char *argv[])
             switch (confno)
             {
             case 1:
-                strcpy(server, head);
+                strcpy(server_kiss, head);
                 break;
             case 2:
-                strcpy(port, head);
+                strcpy(port_kiss, head);
                 break;
             case 3:
-                strcpy(mycall, head);
+                strcpy(server_aprs, head);
                 break;
             case 4:
+                strcpy(port_aprs, head);
+                break;
+            case 5:
+                strcpy(mycall, strupr(head));
+                break;
+            case 6:
                 strcpy(msg, head);
                 break;
             }
         }
         fclose(fp);
+        if (strlen(server_kiss) && strlen(port_kiss) && strlen(server_aprs) && strlen(port_aprs) && strlen(mycall) && strlen(msg))
+        {
+            printf("config file read success:\n\tserver_kiss:\t%s\n\tport_kiss:\t%s\n\tserver_aprs:\t%s\n\tport_aprs:\t%s\n\tmycall:\t\t%s\n\tmsg:\t\t%s\n",
+                   server_kiss, port_kiss, server_aprs, port_aprs, mycall, msg);
+            return 1;
+        }
+        else
+        {
+            printf("error, 'autodiu.confg' wrong, please check program exited!\n");
+            return -1;
+        }
     }
-    printf("config file read success:\n\tserver:\t%s\n\tport:\t%s\n\tmycall:\t%s\n\tmsg:\t%s\n", server, port, mycall, msg);
+}
+
+int main(int argc, char *argv[])
+{
+    int ret = system("echo $(pgrep autobiu) |grep -c \" \" > /dev/null");
+    if (!ret)
+    {
+        printf("program already running, can't run it more than once.\n");
+        return -1;
+    }
+
+    printf("\n\t\t--------------\n\t\t|  AUTO BIU  |\n\t\t--------------\n");
+    printf("\t\t\t by bg4uvr@qq.com\n");
+    printf("\nyou can use './autobiu -d' to run as debug mode.\n\n");
+    int debug = 0;
+    if (argc == 2 && strcmp(argv[1], "-d") == 0)
+        debug = 1;
+    else if (argc != 1)
+    {
+        printf("\ncommand option fail, only can use '-d'\n\n");
+        printf("\nnow the program exited.\n\n");
+        return -1;
+    }
+    if (checkcfg() < 0)
+        return -1;
     if (debug == 0)
     {
         printf("\nprogram now run as daemon mode(in background), now\nyou can safe logout or disconnect SSH.\n\n");
         printf("if you want to stop it, use command: 'pkill autobiu'\n\n");
-    }
-    signal(SIGCHLD, SIG_IGN);
-    if (debug == 0)
-    {
         daemon_init(argv[0], LOG_DAEMON);
         while (1)
         {
@@ -487,6 +560,6 @@ int main(int argc, char *argv[])
             sleep(2);
         }
     }
-    Process(server, port);
+    Process();
     return (0);
 }
