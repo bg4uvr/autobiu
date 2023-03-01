@@ -98,7 +98,7 @@ nano autobiu.conf
 
 1. 编辑 /etc/rc.local 文件，运行命令：```sudo nano /etc/rc.local```
 
-2. 在文件中加入这行命令```/home/你的登录用户名/autodiu/autodiu```，注意如果文件最后一行是```exit 0```，那么需要加在这行之前才行。
+2. 在文件中加入这行命令```/home/你的登录用户名/autobiu/autobiu```，注意如果文件最后一行是```exit 0```，那么需要加在这行之前才行。
 
 3. 按组合键```ctrl + x```，再按```y```，来保存文件。
 

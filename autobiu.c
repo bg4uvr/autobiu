@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <time.h>
+#include <linux/limits.h>
+#include <libgen.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -27,7 +29,7 @@ char *filename(void)
     static char buf[50];
     time_t now = time(NULL);
     struct tm *timenow = localtime(&now);
-    sprintf(buf, "%04d-%02d-%02d.log", timenow->tm_year + 1900, timenow->tm_mon, timenow->tm_mday);
+    sprintf(buf, "%04d-%02d-%02d.log", timenow->tm_year + 1900, timenow->tm_mon + 1, timenow->tm_mday);
     return buf;
 }
 
@@ -265,7 +267,7 @@ int encode(uint8_t *outbuf, uint8_t *inbuf)
 void Process()
 {
     FILE *fp = NULL;
-    uint8_t buffer[MAXLEN], dspbuf[MAXLEN], tmpbuf[100];
+    uint8_t buffer[MAXLEN], dspbuf[MAXLEN], tmpbuf[100], callcheck[15], routecheck[15], route[14];
     u_int32_t starttime = 0, lasttime = 0;
     uint8_t workflag = 0, reptcnt = 0, login = 0;
     fd_set rset;
@@ -332,17 +334,35 @@ void Process()
                         decode(dspbuf, buffer, n);
                         printf("%s\n", dspbuf);
                         fprintf(fp, "%s\n", dspbuf);
-                        if (strstr(dspbuf, "RS0ISS*") != NULL || strstr(dspbuf, "RS0ISS>") != NULL)
+                        if (workflag == 0 && time(NULL) - lasttime > 900)
                         {
-                            if (workflag == 0 && time(NULL) - lasttime > 900)
+                            if (strstr(dspbuf, "RS0ISS*") != NULL || strstr(dspbuf, "RS0ISS>") != NULL)
+                                strcpy(route, "RS0ISS");
+                            else if (strstr(dspbuf, "APRSAT*") != NULL || strstr(dspbuf, "APRSAT>") != NULL)
+                                strcpy(route, "APRSAT");
+                            else if (strstr(dspbuf, "AISAT*") != NULL || strstr(dspbuf, "AISAT>") != NULL)
+                                strcpy(route, "AISAT");
+                            else if (strstr(dspbuf, "ARISS*") != NULL || strstr(dspbuf, "ARISS>") != NULL)
+                                strcpy(route, "ARISS");
+                            else if (strstr(dspbuf, "PCSAT-1*") != NULL || strstr(dspbuf, "PCSAT-1>") != NULL)
+                                strcpy(route, "PCSAT-1");
+                            else if (strstr(dspbuf, "PSAT*") != NULL || strstr(dspbuf, "PSAT>") != NULL)
+                                strcpy(route, "PSAT");
+                            else if (strstr(dspbuf, "SGATE*") != NULL || strstr(dspbuf, "SGATE>") != NULL)
+                                strcpy(route, "SGATE");
+                            else if (strstr(dspbuf, "A55BTN*") != NULL || strstr(dspbuf, "A55BTN>") != NULL)
+                                strcpy(route, "A55BTN");
+                            else
                             {
-                                reptcnt = 0;
-                                starttime = time(NULL);
-                                workflag = 1;
-                                sprintf(tmpbuf, "ISS signal has been received. task start..\n");
-                                printf("%s", tmpbuf);
-                                fprintf(fp, "%s", tmpbuf);
+                                fclose(fp);
+                                continue;
                             }
+                            sprintf(tmpbuf, "%s signal has been received. task start..\n", route);
+                            printf("%s", tmpbuf);
+                            fprintf(fp, "%s", tmpbuf);
+                            reptcnt = 0;
+                            starttime = time(NULL);
+                            workflag = 1;
                         }
                         fclose(fp);
                     }
@@ -369,9 +389,9 @@ void Process()
                         Write(i_fd, dspbuf, strlen(dspbuf));
                         login = 1;
                     }
-                    char callcheck[15];
                     sprintf(callcheck, "%s>", mycall);
-                    if (workflag == 1 && strstr(buffer, callcheck) && strstr(buffer, "RS0ISS*"))
+                    sprintf(routecheck, "%s*", route);
+                    if (workflag == 1 && strstr(buffer, callcheck) && strstr(buffer, routecheck))
                     {
                         fp = fopen(filename(), "a");
                         sprintf(tmpbuf, "[%s] gating confirmed, task of this time is complete.\n", timestr());
@@ -388,8 +408,10 @@ void Process()
             if ((time(NULL) - lasttime) > 30)
             {
                 fp = fopen(filename(), "a");
-                sprintf(dspbuf, "%s>BEACON,RS0ISS:%s", mycall, msg);
+                sprintf(dspbuf, "%s>BEACON,%s:%s", mycall, route, msg);
                 n = encode(buffer, dspbuf);
+                srand(getpid() + time(0));
+                usleep((rand() % 5000) * 1000);
                 Write(s_fd, buffer, n);
                 lasttime = time(NULL);
                 sprintf(tmpbuf, "[%s] my beacon has been sent once.\n", timestr());
@@ -517,6 +539,15 @@ int checkcfg(void)
     }
 }
 
+void chworkdir()
+{
+    char exePath[PATH_MAX];
+    memset(exePath, 0, sizeof(exePath));
+    readlink("/proc/self/exe", exePath, sizeof(exePath));
+    char *exeDir = dirname(exePath);
+    chdir(exeDir);
+}
+
 int main(int argc, char *argv[])
 {
     int ret = system("echo $(pgrep autobiu) |grep -c \" \" > /dev/null");
@@ -538,6 +569,7 @@ int main(int argc, char *argv[])
         printf("\nnow the program exited.\n\n");
         return -1;
     }
+    chworkdir();
     if (checkcfg() < 0)
         return -1;
     if (debug == 0)

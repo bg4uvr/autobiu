@@ -1,6 +1,6 @@
 all: autobiu
 
-autobiu: autobiu.c
+autobiu: autobiu.c unp.h
 	gcc -o autobiu autobiu.c
 
 clean:
