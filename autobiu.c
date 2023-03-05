@@ -127,13 +127,17 @@ int uicall2str(uint8_t *outbuf, uint8_t *endflag, uint8_t *inbuf)
 
 int decode(uint8_t *outbuf, uint8_t *inbuf, uint16_t len)
 {
-    uint8_t buf[MAXLEN];
+    char buf[MAXLEN];
     int16_t uilen = kissdecode(buf, inbuf, len);
     if (uilen < 16)
     {
         printf("error, uidecode uilen<16\n");
         return -1;
     }
+    buf[uilen] = 0;
+    char *ax25chk = strstr(buf, "\x03\xf0");
+    if (ax25chk == NULL || (ax25chk - buf) % 7 != 0 || (ax25chk - buf < 14) || (ax25chk - buf) > 70)
+        return sprintf(outbuf, "not AX.25 format data");
     uint8_t endflag = 0, cnt = 0, sourceflag = 0;
     *outbuf = 0;
     uicall2str(outbuf + strlen(outbuf), &endflag, buf + 7);
@@ -267,9 +271,9 @@ int encode(uint8_t *outbuf, uint8_t *inbuf)
 void Process()
 {
     FILE *fp = NULL;
-    uint8_t buffer[MAXLEN], dspbuf[MAXLEN], tmpbuf[100], callcheck[15], routecheck[15], route[14];
+    uint8_t buffer[MAXLEN], dspbuf[MAXLEN], tmpbuf[100], callcheck[15], routecheck[15];
     u_int32_t starttime = 0, lasttime = 0;
-    uint8_t workflag = 0, reptcnt = 0, login = 0;
+    uint8_t workflag = 0, login = 0;
     fd_set rset;
     struct timeval tv;
     int s_fd, i_fd = -1, max_fd, m, n, optval;
@@ -336,33 +340,23 @@ void Process()
                         fprintf(fp, "%s\n", dspbuf);
                         if (workflag == 0 && time(NULL) - lasttime > 900)
                         {
-                            if (strstr(dspbuf, "RS0ISS*") != NULL || strstr(dspbuf, "RS0ISS>") != NULL)
-                                strcpy(route, "RS0ISS");
-                            else if (strstr(dspbuf, "APRSAT*") != NULL || strstr(dspbuf, "APRSAT>") != NULL)
-                                strcpy(route, "APRSAT");
-                            else if (strstr(dspbuf, "AISAT*") != NULL || strstr(dspbuf, "AISAT>") != NULL)
-                                strcpy(route, "AISAT");
-                            else if (strstr(dspbuf, "ARISS*") != NULL || strstr(dspbuf, "ARISS>") != NULL)
-                                strcpy(route, "ARISS");
-                            else if (strstr(dspbuf, "PCSAT-1*") != NULL || strstr(dspbuf, "PCSAT-1>") != NULL)
-                                strcpy(route, "PCSAT-1");
-                            else if (strstr(dspbuf, "PSAT*") != NULL || strstr(dspbuf, "PSAT>") != NULL)
-                                strcpy(route, "PSAT");
-                            else if (strstr(dspbuf, "SGATE*") != NULL || strstr(dspbuf, "SGATE>") != NULL)
-                                strcpy(route, "SGATE");
-                            else if (strstr(dspbuf, "A55BTN*") != NULL || strstr(dspbuf, "A55BTN>") != NULL)
-                                strcpy(route, "A55BTN");
-                            else
+                            if (
+                                strstr(dspbuf, "RS0ISS*") || strstr(dspbuf, "RS0ISS>") ||
+                                strstr(dspbuf, "NA1SS*") || strstr(dspbuf, "NA1SS>") ||
+                                strstr(dspbuf, "APRSAT*") || strstr(dspbuf, "APRSAT>") ||
+                                strstr(dspbuf, "AISAT*") || strstr(dspbuf, "AISAT>") ||
+                                strstr(dspbuf, "ARISS*") || strstr(dspbuf, "ARISS>") ||
+                                strstr(dspbuf, "PCSAT-1*") || strstr(dspbuf, "PCSAT-1>") ||
+                                strstr(dspbuf, "PSAT*") || strstr(dspbuf, "PSAT>") ||
+                                strstr(dspbuf, "SGATE*") || strstr(dspbuf, "SGATE>") ||
+                                strstr(dspbuf, "A55BTN*") || strstr(dspbuf, "A55BTN>"))
                             {
-                                fclose(fp);
-                                continue;
+                                sprintf(tmpbuf, "ISS or Sat signal has been received. task start..\n");
+                                printf("%s", tmpbuf);
+                                fprintf(fp, "%s", tmpbuf);
+                                starttime = time(NULL);
+                                workflag = 1;
                             }
-                            sprintf(tmpbuf, "%s signal has been received. task start..\n", route);
-                            printf("%s", tmpbuf);
-                            fprintf(fp, "%s", tmpbuf);
-                            reptcnt = 0;
-                            starttime = time(NULL);
-                            workflag = 1;
                         }
                         fclose(fp);
                     }
@@ -390,8 +384,7 @@ void Process()
                         login = 1;
                     }
                     sprintf(callcheck, "%s>", mycall);
-                    sprintf(routecheck, "%s*", route);
-                    if (workflag == 1 && strstr(buffer, callcheck) && strstr(buffer, routecheck))
+                    if (workflag == 1 && strstr(buffer, callcheck) && strstr(buffer, "RS0ISS*")) // we only check ISS, ignore other sat.
                     {
                         fp = fopen(filename(), "a");
                         sprintf(tmpbuf, "[%s] gating confirmed, task of this time is complete.\n", timestr());
@@ -408,7 +401,7 @@ void Process()
             if ((time(NULL) - lasttime) > 30)
             {
                 fp = fopen(filename(), "a");
-                sprintf(dspbuf, "%s>BEACON,%s:%s", mycall, route, msg);
+                sprintf(dspbuf, "%s>BEACON,ARISS,APRSAT:%s", mycall, msg);
                 n = encode(buffer, dspbuf);
                 srand(getpid() + time(0));
                 usleep((rand() % 5000) * 1000);
